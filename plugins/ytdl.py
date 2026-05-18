@@ -378,7 +378,7 @@ async def process_video(client, event, url, cookies_env_var, check_duration_and_
             THUMB = await screenshot(download_path, metadata['duration'], event.sender_id)
 
         chat_id = event.chat_id
-        SIZE = 2 * 1024 * 1024
+        SIZE = 2 * 1024 * 1024 * 1024
         caption = f"{title}"
      
         if os.path.exists(download_path) and os.path.getsize(download_path) > SIZE:

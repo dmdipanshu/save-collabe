@@ -10,8 +10,8 @@ import cv2
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from motor.motor_asyncio import AsyncIOMotorClient
-from config import MONGO_DB as MONGO_URI, DB_NAME
+import sqlite3
+import json
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,12 +20,104 @@ PUBLIC_LINK_PATTERN = re.compile(r'(https?://)?(t\.me|telegram\.me)/([^/]+)(/(\d
 PRIVATE_LINK_PATTERN = re.compile(r'(https?://)?(t\.me|telegram\.me)/c/(\d+)(/(\d+))?')
 VIDEO_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "3gp"}
 
-mongo_client = AsyncIOMotorClient(MONGO_URI)
-db = mongo_client[DB_NAME]
-users_collection = db["users"]
-premium_users_collection = db["premium_users"]
-statistics_collection = db["statistics"]
-codedb = db["redeem_code"]
+DB_PATH = "local_db.db"
+
+class MockResult:
+    def __init__(self, modified_count=0, deleted_count=0):
+        self.modified_count = modified_count
+        self.deleted_count = deleted_count
+
+class LocalCollection:
+    def __init__(self, name):
+        self.name = name
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS collections (
+                collection_name TEXT,
+                key TEXT,
+                data TEXT,
+                PRIMARY KEY (collection_name, key)
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def _get_key(self, query):
+        if "user_id" in query:
+            return str(query["user_id"])
+        return "default"
+
+    async def find_one(self, query):
+        key = self._get_key(query)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT data FROM collections WHERE collection_name = ? AND key = ?', (self.name, key))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            data = json.loads(row[0])
+            for k, v in data.items():
+                if isinstance(v, str):
+                    try:
+                        data[k] = datetime.fromisoformat(v)
+                    except ValueError:
+                        pass
+            return data
+        return None
+
+    async def update_one(self, query, update, upsert=False):
+        key = self._get_key(query)
+        current = await self.find_one(query) or {}
+        
+        modified = False
+        if "$set" in update:
+            for k, v in update["$set"].items():
+                if isinstance(v, datetime):
+                    v = v.isoformat()
+                if current.get(k) != v:
+                    current[k] = v
+                    modified = True
+        
+        if "$unset" in update:
+            for k in update["$unset"].keys():
+                if k in current:
+                    del current[k]
+                    modified = True
+        
+        if "user_id" in query:
+            current["user_id"] = query["user_id"]
+
+        if modified or (upsert and not current):
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''
+                INSERT OR REPLACE INTO collections (collection_name, key, data)
+                VALUES (?, ?, ?)
+            ''', (self.name, key, json.dumps(current)))
+            conn.commit()
+            conn.close()
+            return MockResult(modified_count=1)
+        
+        return MockResult(modified_count=0)
+
+    async def delete_one(self, query):
+        key = self._get_key(query)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('DELETE FROM collections WHERE collection_name = ? AND key = ?', (self.name, key))
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        return MockResult(deleted_count=deleted)
+
+    async def create_index(self, name, expireAfterSeconds=0):
+        pass
+
+users_collection = LocalCollection("users")
+premium_users_collection = LocalCollection("premium_users")
+statistics_collection = LocalCollection("statistics")
+codedb = LocalCollection("redeem_code")
 
 # ------- < start > Session Encoder don't change -------
 
