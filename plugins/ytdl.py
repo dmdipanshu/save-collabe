@@ -80,7 +80,12 @@ def get_random_string(length=7):
 async def process_audio(client, event, url, cookies_env_var=None):
     cookies = None
     if cookies_env_var:
-        cookies = cookies_env_var
+        if cookies_env_var == "YT_COOKIES":
+            cookies = YT_COOKIES
+        elif cookies_env_var == "INSTA_COOKIES":
+            cookies = INSTA_COOKIES
+        else:
+            cookies = cookies_env_var
  
     temp_cookie_path = None
     if cookies:
@@ -318,7 +323,12 @@ async def process_video(client, event, url, cookies_env_var, check_duration_and_
      
     cookies = None
     if cookies_env_var:
-        cookies = cookies_env_var
+        if cookies_env_var == "YT_COOKIES":
+            cookies = YT_COOKIES
+        elif cookies_env_var == "INSTA_COOKIES":
+            cookies = INSTA_COOKIES
+        else:
+            cookies = cookies_env_var
  
      
     random_filename = get_random_string() + ".mp4"
@@ -447,17 +457,20 @@ async def get_seconds(time_string: str) -> int:
     
     return value * time_units.get(unit, 0)
 
+ytdl_last_update = {}
+
 async def progress_bar(current: int, total: int, ud_type: str, message, start: float):
     """
     Updates the progress bar for an ongoing process.
     """
     now = time.time()
-    diff = now - start
+    msg_id = message.id if hasattr(message, "id") else id(message)
     
-    if round(diff % 10) == 0 or current == total:
+    if msg_id not in ytdl_last_update or now - ytdl_last_update[msg_id] >= 4 or current == total:
+        ytdl_last_update[msg_id] = now
         percentage = (current * 100) / total
-        speed = current / diff if diff else 0
-        elapsed_time = round(diff * 1000)
+        speed = current / (now - start) if now > start else 0
+        elapsed_time = round((now - start) * 1000)
         time_to_completion = round((total - current) / speed) * 1000 if speed else 0
         estimated_total_time = elapsed_time + time_to_completion
 
@@ -478,6 +491,8 @@ async def progress_bar(current: int, total: int, ud_type: str, message, start: f
             await message.edit(text=f"{ud_type}\n│ {progress_text}")
         except:
             pass
+        if current == total:
+            ytdl_last_update.pop(msg_id, None)
 
 def humanbytes(size: int) -> str:
     """

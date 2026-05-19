@@ -200,20 +200,25 @@ async def get_uclient(uid):
             return ubot if ubot else Y
     return Y
 
+prog_last_update = {}
+
 async def prog(c, t, C, h, m, st):
     global P
+    now = time.time()
     p = c / t * 100
-    interval = 10 if t >= 100 * 1024 * 1024 else 20 if t >= 50 * 1024 * 1024 else 30 if t >= 10 * 1024 * 1024 else 50
-    step = int(p // interval) * interval
-    if m not in P or P[m] != step or p >= 100:
-        P[m] = step
+    if m not in prog_last_update or now - prog_last_update[m] >= 4 or p >= 100:
+        prog_last_update[m] = now
         c_mb = c / (1024 * 1024)
         t_mb = t / (1024 * 1024)
         bar = '🟢' * int(p / 10) + '🔴' * (10 - int(p / 10))
-        speed = c / (time.time() - st) / (1024 * 1024) if time.time() > st else 0
+        speed = c / (now - st) / (1024 * 1024) if now > st else 0
         eta = time.strftime('%M:%S', time.gmtime((t - c) / (speed * 1024 * 1024))) if speed > 0 else '00:00'
-        await C.edit_message_text(h, m, f"__**Pyro Handler...**__\n\n{bar}\n\n⚡**__Completed__**: {c_mb:.2f} MB / {t_mb:.2f} MB\n📊 **__Done__**: {p:.2f}%\n🚀 **__Speed__**: {speed:.2f} MB/s\n⏳ **__ETA__**: {eta}\n\n**__Powered by Team SPY__**")
-        if p >= 100: P.pop(m, None)
+        try:
+            await C.edit_message_text(h, m, f"__**Pyro Handler...**__\n\n{bar}\n\n⚡**__Completed__**: {c_mb:.2f} MB / {t_mb:.2f} MB\n📊 **__Done__**: {p:.2f}%\n🚀 **__Speed__**: {speed:.2f} MB/s\n⏳ **__ETA__**: {eta}\n\n**__Powered by Team SPY__**")
+        except Exception:
+            pass
+        if p >= 100:
+            prog_last_update.pop(m, None)
 
 async def send_direct(c, m, tcid, ft=None, rtmid=None):
     try:
@@ -434,7 +439,7 @@ async def text_handler(c, m):
     s = Z[uid].get('step')
     x = await get_ubot(uid)
     if not x:
-        await message.reply("Add your bot /setbot `token`")
+        await m.reply("Add your bot /setbot `token`")
         return
 
     if s == 'start':
@@ -549,7 +554,9 @@ async def text_handler(c, m):
                     try: await pt.edit(f'{j+1}/{n}: Error - {str(e)[:30]}')
                     except: pass
                 
-                await asyncio.sleep(10)
+                is_prem = await is_premium_user(uid)
+                sleep_time = 2 if is_prem else 6
+                await asyncio.sleep(sleep_time)
             
             if j+1 == n:
                 await m.reply_text(f'Batch Completed ✅ Success: {success}/{n}')

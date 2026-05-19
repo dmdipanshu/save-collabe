@@ -2,10 +2,12 @@
 # Licensed under the GNU General Public License v3.0.  
 # See LICENSE file in the repository root for full license text.
 
+import asyncio
+import psutil
 from datetime import timedelta, datetime
 from shared_client import client as bot_client
 from telethon import events
-from utils.func import get_premium_details, is_private_chat, get_display_name, get_user_data, premium_users_collection, is_premium_user
+from utils.func import get_premium_details, is_private_chat, get_display_name, get_user_data, premium_users_collection, is_premium_user, users_collection
 from config import OWNER_ID
 import logging
 logging.basicConfig(format=
@@ -176,3 +178,111 @@ async def remove_premium_handler(event):
         logger.error(f'Error removing premium from {target_user_id}: {e}')
         await event.respond(f'❌ Error removing premium: {str(e)}')
         return
+
+def get_readable_size(size_in_bytes):
+    power = 2**10
+    n = 0
+    power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
+    while size_in_bytes > power and n < 4:
+        size_in_bytes /= power
+        n += 1
+    return f"{size_in_bytes:.2f} {power_labels[n]}"
+
+@bot_client.on(events.NewMessage(pattern='/stats'))
+async def stats_handler(event):
+    if not await is_private_chat(event):
+        await event.respond("This command can only be used in private chats.")
+        return
+
+    user_id = event.sender_id
+    is_owner = user_id in OWNER_ID
+    
+    # Calculate stats
+    total_users = await users_collection.count_documents()
+    total_premium = await premium_users_collection.count_documents()
+    
+    try:
+        from plugins.batch import ACTIVE_USERS
+        active_batches = len(ACTIVE_USERS)
+    except Exception:
+        active_batches = 0
+    
+    if is_owner:
+        # System Stats
+        cpu_usage = psutil.cpu_percent()
+        ram = psutil.virtual_memory()
+        ram_usage = ram.percent
+        ram_total = get_readable_size(ram.total)
+        ram_used = get_readable_size(ram.used)
+        disk = psutil.disk_usage('/')
+        disk_usage = disk.percent
+        disk_total = get_readable_size(disk.total)
+        disk_used = get_readable_size(disk.used)
+        
+        stats_text = (
+            "📊 **Bot Server Statistics (Admin View)**\n\n"
+            f"👥 **Total Registered Users:** {total_users}\n"
+            f"⭐ **Premium Members:** {total_premium}\n"
+            f"🔄 **Active Batches:** {active_batches}\n\n"
+            "💻 **System Info:**\n"
+            f"🖥️ **CPU Usage:** {cpu_usage}%\n"
+            f"💾 **RAM Usage:** {ram_usage}% ({ram_used}/{ram_total})\n"
+            f"📁 **Disk Usage:** {disk_usage}% ({disk_used}/{disk_total})\n"
+        )
+    else:
+        stats_text = (
+            "📊 **Bot Statistics**\n\n"
+            f"👥 **Total Registered Users:** {total_users}\n"
+            f"⭐ **Premium Members:** {total_premium}\n"
+            f"🔄 **Active Batches:** {active_batches}\n\n"
+            "Enjoy using the bot! Use `/status` to check your personal plan."
+        )
+        
+    await event.respond(stats_text)
+
+@bot_client.on(events.NewMessage(pattern='/broadcast'))
+async def broadcast_handler(event):
+    if not await is_private_chat(event):
+        await event.respond("This command can only be used in private chats.")
+        return
+
+    user_id = event.sender_id
+    if user_id not in OWNER_ID:
+        await event.respond("❌ This command is restricted to the bot owner.")
+        return
+        
+    # Get the message to broadcast
+    if not event.reply_to_msg_id and len(event.text.split()) < 2:
+        await event.respond("Usage: Reply to a message with `/broadcast` or use `/broadcast <text>`")
+        return
+        
+    broadcast_msg = None
+    if event.reply_to_msg_id:
+        broadcast_msg = await event.get_reply_message()
+    else:
+        broadcast_msg = event.text.split(" ", 1)[1]
+        
+    status_msg = await event.respond("🔄 Broadcasting message to all users...")
+    
+    # Find all users
+    users = await users_collection.find()
+    success = 0
+    failed = 0
+    
+    for u in users:
+        uid = u.get("user_id")
+        if not uid or uid == user_id:
+            continue
+        try:
+            await bot_client.send_message(uid, broadcast_msg)
+            success += 1
+            await asyncio.sleep(0.3)  # Rate limit prevention
+        except Exception:
+            failed += 1
+            
+    await status_msg.edit(
+        "✅ **Broadcast Completed!**\n\n"
+        f"🟢 **Successful:** {success}\n"
+        f"🔴 **Failed/Blocked:** {failed}\n"
+        f"👥 **Total Users:** {len(users)}"
+    )

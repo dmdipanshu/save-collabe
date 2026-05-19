@@ -111,6 +111,32 @@ class LocalCollection:
         conn.close()
         return MockResult(deleted_count=deleted)
 
+    async def count_documents(self, query=None):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM collections WHERE collection_name = ?', (self.name,))
+        count = c.fetchone()[0]
+        conn.close()
+        return count
+
+    async def find(self, query=None):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT data FROM collections WHERE collection_name = ?', (self.name,))
+        rows = c.fetchall()
+        conn.close()
+        results = []
+        for row in rows:
+            data = json.loads(row[0])
+            for k, v in data.items():
+                if isinstance(v, str):
+                    try:
+                        data[k] = datetime.fromisoformat(v)
+                    except ValueError:
+                        pass
+            results.append(data)
+        return results
+
     async def create_index(self, name, expireAfterSeconds=0):
         pass
 

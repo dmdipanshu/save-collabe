@@ -62,7 +62,11 @@ async def set(_, message):
         BotCommand("terms", "🥺 Terms and conditions"),
         BotCommand("help", "❓ If you're a noob, still!"),
         BotCommand("cancel", "🚫 Cancel login/batch/settings process"),
-        BotCommand("stop", "🚫 Cancel batch process")
+        BotCommand("stop", "🚫 Cancel batch process"),
+        BotCommand("stats", "📊 Get bot stats"),
+        BotCommand("gencode", "🔑 Generate promo code (Admin)"),
+        BotCommand("redeem", "🎉 Redeem promo code"),
+        BotCommand("broadcast", "📢 Broadcast message (Admin)")
     ])
  
     await message.reply("✅ Commands configured successfully!")

@@ -5,8 +5,10 @@
 from shared_client import client as bot_client, app
 from telethon import events
 from datetime import timedelta
+import string
+import random
 from config import OWNER_ID
-from utils.func import add_premium_user, is_private_chat
+from utils.func import add_premium_user, is_private_chat, codedb
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton as IK, InlineKeyboardMarkup as IKM
 from config import OWNER_ID, JOIN_LINK as JL , ADMIN_CONTACT as AC
@@ -103,3 +105,117 @@ async def start_handler(client, message):
         caption=b6,
         reply_markup=kb
     )
+
+def generate_random_code(length=12):
+    chars = string.ascii_uppercase + string.digits
+    return "SPY-" + "".join(random.choice(chars) for _ in range(length))
+
+@bot_client.on(events.NewMessage(pattern='/gencode'))
+async def gencode_handler(event):
+    if not await is_private_chat(event):
+        await event.respond("This command can only be used in private chats.")
+        return
+        
+    user_id = event.sender_id
+    if user_id not in OWNER_ID:
+        await event.respond("❌ This command is restricted to the bot owner.")
+        return
+        
+    text = event.message.text.strip()
+    parts = text.split(' ')
+    if len(parts) != 3:
+        await event.respond(
+            "Invalid format. Use: `/gencode value unit`\n"
+            "Example: `/gencode 30 days` or `/gencode 1 weeks` or `/gencode 1 month`"
+        )
+        return
+        
+    try:
+        duration_value = int(parts[1])
+        duration_unit = parts[2].lower()
+        valid_units = ['min', 'hours', 'days', 'weeks', 'month', 'year']
+        if duration_unit not in valid_units:
+            await event.respond(f"Invalid duration unit. Choose from: {', '.join(valid_units)}")
+            return
+            
+        code = generate_random_code()
+        
+        await codedb.update_one(
+            {"user_id": code},
+            {"$set": {
+                "code": code,
+                "duration_value": duration_value,
+                "duration_unit": duration_unit,
+                "used": False
+            }},
+            upsert=True
+        )
+        
+        await event.respond(
+            f"✅ **Promo Code Generated!**\n\n"
+            f"🔑 **Code:** `{code}`\n"
+            f"📅 **Duration:** {duration_value} {duration_unit}\n\n"
+            f"Send this code to a user. They can redeem it using `/redeem <code>`."
+        )
+        
+    except ValueError:
+        await event.respond("Invalid duration value. It must be an integer.")
+    except Exception as e:
+        await event.respond(f"Error: {e}")
+
+@bot_client.on(events.NewMessage(pattern='/redeem'))
+async def redeem_handler(event):
+    if not await is_private_chat(event):
+        await event.respond("This command can only be used in private chats.")
+        return
+        
+    user_id = event.sender_id
+    text = event.message.text.strip()
+    parts = text.split(' ')
+    if len(parts) != 2:
+        await event.respond("Usage: `/redeem CODE` or `/redeem SPY-XXXX`")
+        return
+        
+    code_to_redeem = parts[1].strip()
+    
+    try:
+        code_data = await codedb.find_one({"user_id": code_to_redeem})
+        
+        if not code_data or code_data.get("used", False):
+            await event.respond("❌ Invalid or already used promo code.")
+            return
+            
+        duration_value = code_data["duration_value"]
+        duration_unit = code_data["duration_unit"]
+        
+        await codedb.update_one(
+            {"user_id": code_to_redeem},
+            {"$set": {"used": True}}
+        )
+        
+        success, result = await add_premium_user(user_id, duration_value, duration_unit)
+        if success:
+            expiry_utc = result
+            expiry_ist = expiry_utc + timedelta(hours=5, minutes=30)
+            formatted_expiry = expiry_ist.strftime('%d-%b-%Y %I:%M:%S %p')
+            
+            await event.respond(
+                f"🎉 **Premium Activated!**\n\n"
+                f"✅ Code `{code_to_redeem}` redeemed successfully.\n"
+                f"💎 Subscription valid until: **{formatted_expiry}** (IST)"
+            )
+            
+            for owner in OWNER_ID:
+                try:
+                    await bot_client.send_message(owner, f"🔔 User {user_id} redeemed code `{code_to_redeem}` for {duration_value} {duration_unit} premium.")
+                except Exception:
+                    pass
+        else:
+            await codedb.update_one(
+                {"user_id": code_to_redeem},
+                {"$set": {"used": False}}
+            )
+            await event.respond(f"❌ Failed to activate premium: {result}")
+            
+    except Exception as e:
+        await event.respond(f"Error: {e}")
